@@ -35,6 +35,7 @@ Goal: support real hosted installations without losing task state or leaking ten
 - Task audit log and terminal states.
 - Marker-backed GitHub status comments that are edited in place per task.
 - Maintainer command router for status, stop, retry, explain, and approve.
+- **Branch Gardener** — scheduled branch hygiene skill: classify branches, delete dead ones, open draft PRs for PRless work, report to Cave. See [`docs/branch-gardener.md`](docs/branch-gardener.md).
 
 ## Milestone 3: GitHub Correctness
 
