@@ -116,6 +116,17 @@ The same lifecycle in operational prose:
 
 ## coven-code Delta: Headless Mode
 
+> **The normative, locked contract lives in [`docs/headless-contract.md`](docs/headless-contract.md)
+> (contract version `1`).** That document is the single source of truth, with
+> machine-checkable JSON Schemas and golden fixtures in [`docs/contracts/`](docs/contracts/)
+> and a conformance test (`crates/worker/tests/contract.rs`). The summary below
+> is illustrative; where it disagrees with the contract, the contract wins. In
+> particular the contract supersedes this section on three points: the session
+> brief is **tokenless** (git auth flows via the `COVEN_GIT_TOKEN` env var, not
+> `GIT_ASKPASS`/an embedded `auth.token`), the brief carries a `task` tagged
+> union (not an `issue` object), and the v1 `result.json` envelope does **not**
+> include an `events` array (progress streaming is deferred to M2).
+
 The execution runtime needs the following additions to work as a GitHub App backend:
 
 ### `--headless` flag
@@ -205,7 +216,8 @@ The PR body and issue comments are written in the familiar's voice:
 I looked at issue #42 and here's what I found:
 
 The OAuth token refresh path in `src/auth/refresh.rs` wasn't accounting for
-clock skew between the client and the auth server. I added a 60-second buffer\nto the expiry check.
+clock skew between the client and the auth server. I added a 60-second buffer
+to the expiry check.
 
 **Changed:** `src/auth/refresh.rs` (+12 / -3)
 **Tests:** 8/8 passing (added 2 regression cases)
