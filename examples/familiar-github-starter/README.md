@@ -8,6 +8,7 @@ Use it as a starting point for a demo repository:
 2. Replace the GitHub App ID, private key path, and webhook secret.
 3. Set `bot_username` to your GitHub App bot login.
 4. Confirm `coven_code_bin` points at a `coven-code` binary with headless mode support.
-5. Add labels such as `coven:fix` and `coven:docs` to issues you want Cody to draft PRs for.
+5. Set `server.cave_base_url` only if you need to override the hosted Cave default; comments and Check Runs link to `/sessions/<task-id>` under that URL.
+6. Add labels such as `coven:fix` and `coven:docs` to issues you want Cody to draft PRs for.
 
 The example keeps autonomy conservative: the familiar should draft PRs and expose Cave oversight rather than merging changes directly.

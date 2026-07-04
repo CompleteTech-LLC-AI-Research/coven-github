@@ -88,6 +88,7 @@ Edit `config/local.toml`:
 - Set `github.webhook_secret` to the secret from step 1
 - Set `worker.coven_code_bin` to your `coven-code` binary path
 - Configure `[[familiars]]` with your bot username and model
+- Set `server.cave_base_url` only if you need to override the hosted Cave default; task comments and Check Runs link to `/sessions/<task-id>` under this base URL.
 
 Important config fields:
 
@@ -115,9 +116,16 @@ empty `[[familiars]]` list, or duplicate familiar ids/bot usernames:
 ./target/release/coven-github doctor --config config/local.toml
 ```
 
-It prints one line per finding and exits non-zero if any **error** remains, so
-it works as a CI gate or container preflight. `serve` runs the same checks on
-startup and refuses to boot when an error is present.
+It prints each finding with a concrete `next:` line and exits non-zero if any
+**error** remains, so it works as a CI gate or container preflight. `serve` runs
+the same checks on startup and refuses to boot when an error is present.
+
+Example:
+
+```txt
+✗ error  worker.coven_code_bin       coven-code binary not found at '/usr/local/bin/coven-code' (and not on PATH) — build/install coven-code or fix the path.
+                                      next: Install coven-code with headless support or set worker.coven_code_bin to the binary path.
+```
 
 ## 5. Run
 
@@ -162,7 +170,8 @@ green run proves the receiver end-to-end without a real delivery or `coven-code`
 On a repo where the App is installed:
 1. Create an issue
 2. Assign it to your bot user (`@coven-cody`)
-3. Watch the Check Run appear and the familiar start working
+3. Watch the Check Run appear and the familiar comment with a CovenCave session URL
+4. Review the draft PR if the run produces commits
 
 You can also apply a configured label such as `coven:fix` to route the issue through `familiars[].trigger_labels`.
 
@@ -222,6 +231,7 @@ See [Security Model](security.md) and [Container Isolation](container-isolation.
 | `401 invalid signature` | `github.webhook_secret` does not match the GitHub App secret. | Rotate/copy the secret into `config/local.toml` and restart. |
 | No task appears after assignment | Bot username or installed repository does not match config. | Confirm `familiars[].bot_username` equals the App bot login and the App is installed on the repo. |
 | Label does nothing | Label is not in `familiars[].trigger_labels`. | Add the exact label name and restart. |
-| Check Run fails immediately | GitHub App permissions are incomplete or the head SHA/base branch path needs hardening. | Confirm Contents, Issues, Pull requests, Checks, and Metadata permissions. |
+| Check Run fails immediately | GitHub App permissions are incomplete or the target branch/ref could not be resolved. | Confirm Contents, Issues, Pull requests, Checks, and Metadata permissions. |
+| Cave link opens the wrong place | `server.cave_base_url` points at the webhook server or another non-Cave URL. | Set it to the CovenCave base URL, or remove it to use the hosted default. |
 | Familiar never exits | Runtime process hung. | Lower `worker.timeout_secs`; current workers enforce this timeout. |
 | No PR opens | `coven-code` did not write commits or a successful `result.json`. | Inspect worker logs and the task workspace before cleanup in a development run. |

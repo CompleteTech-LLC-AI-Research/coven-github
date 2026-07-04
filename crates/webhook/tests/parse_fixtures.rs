@@ -17,10 +17,7 @@ fn parse(event_type: &str, raw: &str) -> GitHubEvent {
 
 #[test]
 fn issue_assigned_fixture_parses() {
-    let event = parse(
-        "issues",
-        include_str!("fixtures/issue_assigned.json"),
-    );
+    let event = parse("issues", include_str!("fixtures/issue_assigned.json"));
     match event {
         GitHubEvent::IssueAssigned(e) => {
             assert_eq!(e.installation_id, 987654);

@@ -162,11 +162,9 @@ fn event_to_task(state: &AppState, event: GitHubEvent) -> Option<Task> {
         GitHubEvent::IssueComment(e) => {
             // Find a familiar mentioned in the comment body (skip the bot's own
             // comments to avoid self-trigger loops).
-            let familiar = state
-                .config
-                .familiars
-                .iter()
-                .find(|f| e.commenter_login != f.bot_username && mentions(&e.comment_body, &f.bot_username))?;
+            let familiar = state.config.familiars.iter().find(|f| {
+                e.commenter_login != f.bot_username && mentions(&e.comment_body, &f.bot_username)
+            })?;
 
             // GitHub delivers PR conversation comments through `issue_comment`.
             // Route those through PR iteration so the familiar gets PR context
@@ -197,11 +195,9 @@ fn event_to_task(state: &AppState, event: GitHubEvent) -> Option<Task> {
         GitHubEvent::PullRequestReview(e) => {
             // A submitted review carries a summary body and a verdict. Trigger
             // on an explicit mention in the body, same as inline comments.
-            let familiar = state
-                .config
-                .familiars
-                .iter()
-                .find(|f| e.reviewer_login != f.bot_username && mentions(&e.review_body, &f.bot_username))?;
+            let familiar = state.config.familiars.iter().find(|f| {
+                e.reviewer_login != f.bot_username && mentions(&e.review_body, &f.bot_username)
+            })?;
 
             Some(Task {
                 id: uuid::Uuid::new_v4().to_string(),
@@ -218,11 +214,9 @@ fn event_to_task(state: &AppState, event: GitHubEvent) -> Option<Task> {
         }
 
         GitHubEvent::PullRequestReviewComment(e) => {
-            let familiar = state
-                .config
-                .familiars
-                .iter()
-                .find(|f| e.commenter_login != f.bot_username && mentions(&e.comment_body, &f.bot_username))?;
+            let familiar = state.config.familiars.iter().find(|f| {
+                e.commenter_login != f.bot_username && mentions(&e.comment_body, &f.bot_username)
+            })?;
 
             Some(Task {
                 id: uuid::Uuid::new_v4().to_string(),

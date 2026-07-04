@@ -3,7 +3,9 @@
 
 [server]
 bind = "0.0.0.0:3000"
-cave_base_url = "http://localhost:3000"
+# Optional CovenCave base URL override for Check Run details and task comments.
+# Omit to use the hosted default; do not point this at the webhook server.
+# cave_base_url = "https://cave.example.com"
 
 [github]
 app_id = 123456

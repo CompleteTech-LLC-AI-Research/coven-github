@@ -45,7 +45,10 @@ fn golden_result_deserializes_into_adapter_type() {
     assert_eq!(result.status, SessionStatus::Success);
     assert_eq!(result.branch.as_deref(), Some("cody/fix-issue-42"));
     assert_eq!(result.commits.len(), 1);
-    assert_eq!(result.files_changed, vec!["src/auth/refresh.rs".to_string()]);
+    assert_eq!(
+        result.files_changed,
+        vec!["src/auth/refresh.rs".to_string()]
+    );
     assert!(result.exit_reason.is_none());
 }
 
@@ -90,8 +93,8 @@ fn every_exit_reason_variant_is_wire_named_as_documented() {
         ("git_conflict", ExitReason::GitConflict),
         ("infra_error", ExitReason::InfraError),
     ] {
-        let parsed: ExitReason =
-            serde_json::from_str(&format!("\"{json}\"")).expect("documented exit_reason must parse");
+        let parsed: ExitReason = serde_json::from_str(&format!("\"{json}\""))
+            .expect("documented exit_reason must parse");
         assert_eq!(parsed, expected);
     }
 }

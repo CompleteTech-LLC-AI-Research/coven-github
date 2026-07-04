@@ -75,7 +75,9 @@ pub enum GitHubEvent {
     PullRequestReviewComment(PrReviewCommentEvent),
     /// `ping` delivery GitHub sends when a webhook is first configured.
     Ping,
-    Unsupported { name: String },
+    Unsupported {
+        name: String,
+    },
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

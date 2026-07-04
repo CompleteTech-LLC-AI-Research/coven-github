@@ -2,7 +2,7 @@
 
 **Assign an issue to your familiar. Get a PR back.**
 
-`coven-github` is the GitHub App adapter for [OpenCoven](https://opencoven.ai). It bridges GitHub's issue and pull-request workflow with the Coven harness — turning any Coven-configured familiar into a first-class GitHub coding agent, without black-box model lock-in.
+`coven-github` is the GitHub App adapter for [OpenCoven](https://opencoven.ai). It routes GitHub issues, labels, mentions, and review comments into a Coven familiar, then publishes progress through Check Runs, issue comments, draft PRs, and CovenCave session links.
 
 ```mermaid
 flowchart LR
@@ -27,13 +27,12 @@ flowchart LR
 
 ---
 
-## Why
+## What it does
 
-Every existing GitHub coding agent is a black box: GitHub's model, GitHub's context, GitHub's behavior. There's no concept of a *familiar* — no persistent identity, no memory, no composable skills, no operator-defined behavior.
-
-`coven-github` flips that. Your familiar is yours: your model, your skills, your memory, your voice in the PR body. The GitHub App is just the ingress layer.
-
-That is the product wedge: assign it like a teammate, get a PR back, and keep Cave oversight in the loop. A familiar should know the difference between "technically works" and "good enough for this repo, this team, and this moment."
+- Accepts GitHub App webhook deliveries and verifies their HMAC signature.
+- Routes configured triggers to a familiar by bot username or label.
+- Runs `coven-code --headless` with a tokenless session brief.
+- Posts Check Run state, direct Cave session links, and draft PRs when the run produces commits.
 
 See [Architecture Diagrams](docs/architecture.md), [Design](DESIGN.md), [Hosted OpenCoven](HOSTED.md), [Familiar Contract](FAMILIAR-CONTRACT.md), [Roadmap](ROADMAP.md), and [Hosted vs self-hosted](docs/hosted-vs-self-hosted.md) for the operational plan.
 
@@ -131,12 +130,11 @@ git clone https://github.com/OpenCoven/coven-github
 cd coven-github
 cargo build --release
 
-# Configure (see config/example.toml)
+# Configure
 cp config/example.toml config/local.toml
-# Then set in config/local.toml: github.app_id, github.private_key_path,
-# github.webhook_secret, worker.coven_code_bin, and a [[familiars]] block.
 
-# Validate the config (catches placeholder secrets, missing PEM/binary, etc.)
+# Fill in config/local.toml, then validate it.
+# doctor prints one next step for every error or warning.
 ./target/release/coven-github doctor --config config/local.toml
 
 # Run
@@ -146,7 +144,7 @@ cp config/example.toml config/local.toml
 Prefer containers? A multi-stage [`Dockerfile`](Dockerfile) and
 [`compose.yaml`](compose.yaml) ship in the repo root.
 
-See [docs/self-hosting.md](docs/self-hosting.md) for full setup including GitHub App registration. For a minimal familiar route, start from [`examples/familiar-github-starter`](examples/familiar-github-starter/).
+See [docs/self-hosting.md](docs/self-hosting.md) for GitHub App registration, permissions, smoke tests, and troubleshooting. For a minimal familiar route, start from [`examples/familiar-github-starter`](examples/familiar-github-starter/).
 
 ---
 

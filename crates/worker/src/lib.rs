@@ -85,6 +85,7 @@ async fn execute_task(config: &Config, task_store: TaskStore, task: Task) -> Res
         // comment or PR API call must never leave a perpetually in-progress check
         // blocking merges on a real repo.
         let check_name = format!("{} — {}", familiar.display_name, task_title(&task.kind));
+        let details_url = cave_session_url(config, &task.id);
         let check_id = check_run::create_with_base_url(
             api_base_url,
             &token,
@@ -92,12 +93,7 @@ async fn execute_task(config: &Config, task_store: TaskStore, task: Task) -> Res
             &task.repo_name,
             &targets.head_sha,
             &check_name,
-            config
-                .server
-                .cave_base_url
-                .as_deref()
-                .map(|b| format!("{b}/sessions/{}", task.id))
-                .as_deref(),
+            Some(details_url.as_str()),
         )
         .await?;
         Ok::<_, anyhow::Error>((token, targets, check_id))
@@ -217,11 +213,7 @@ async fn run_and_publish(
     // Best-effort "starting" comment — a flaky comment API call must not abort
     // the task or orphan the Check Run.
     if let Some(issue_number) = task_issue_number(&task.kind) {
-        let start_msg = format!(
-            "👋 I'm **{}**, your Coven coding familiar. I'm on it — I'll open a PR once I've had a look.\n\n[Watch this session in CovenCave →]({})",
-            familiar.display_name,
-            cave_base_url(config),
-        );
+        let start_msg = starting_comment(config, familiar, &task.id);
         if let Err(e) = pr::post_comment_with_base_url(
             api_base_url,
             token,
@@ -245,7 +237,7 @@ async fn run_and_publish(
         check_id,
         check_run::CheckStatus::InProgress,
         "Running",
-        "Familiar is working on the task…",
+        "Familiar is working on the task.",
     )
     .await
     {
@@ -284,10 +276,7 @@ async fn run_and_publish(
                 Ok(pr_num) => {
                     opened_pr = Some(pr_num);
                     if let Some(issue_number) = task_issue_number(&task.kind) {
-                        let msg = format!(
-                            "✅ PR #{pr_num} opened — [watch in CovenCave →]({})",
-                            cave_base_url(config)
-                        );
+                        let msg = pr_opened_comment(config, &task.id, pr_num);
                         if let Err(e) = pr::post_comment_with_base_url(
                             api_base_url,
                             token,
@@ -309,7 +298,7 @@ async fn run_and_publish(
                     warn!(task_id = %task.id, "failed to open PR: {e:#}");
                     if let Some(issue_number) = task_issue_number(&task.kind) {
                         let msg = format!(
-                            "⚠️ I pushed `{branch}` but couldn't open the PR automatically ({e}). You can open it manually."
+                            "I pushed `{branch}` but could not open the PR automatically: {e}. Open the branch manually or check the App's pull-request permission."
                         );
                         let _ = pr::post_comment_with_base_url(
                             api_base_url,
@@ -329,10 +318,7 @@ async fn run_and_publish(
     // Needs-input: surface the familiar's clarifying question on the issue/PR.
     if result.status == SessionStatus::NeedsInput {
         if let Some(issue_number) = task_issue_number(&task.kind) {
-            let msg = format!(
-                "🤔 I need a bit more direction before I continue:\n\n{}",
-                result.summary
-            );
+            let msg = format!("I need input before I can continue:\n\n{}", result.summary);
             if let Err(e) = pr::post_comment_with_base_url(
                 api_base_url,
                 token,
@@ -508,9 +494,9 @@ async fn run_coven_code(
             )),
         },
         Some(2) => Attempt::RetrySafe(anyhow::anyhow!("coven-code infra error (exit 2)")),
-        Some(code) => {
-            Attempt::RetrySafe(anyhow::anyhow!("coven-code exited with unexpected code {code}"))
-        }
+        Some(code) => Attempt::RetrySafe(anyhow::anyhow!(
+            "coven-code exited with unexpected code {code}"
+        )),
         None => Attempt::RetrySafe(anyhow::anyhow!("coven-code killed by signal")),
     }
 }
@@ -529,6 +515,28 @@ fn cave_base_url(config: &Config) -> &str {
         .cave_base_url
         .as_deref()
         .unwrap_or(DEFAULT_CAVE_BASE_URL)
+}
+
+fn cave_session_url(config: &Config, task_id: &str) -> String {
+    format!(
+        "{}/sessions/{task_id}",
+        cave_base_url(config).trim_end_matches('/')
+    )
+}
+
+fn starting_comment(config: &Config, familiar: &FamiliarConfig, task_id: &str) -> String {
+    format!(
+        "{} is working on this.\n\nSession: {}\n\nI'll open a draft PR if the run produces reviewable changes.",
+        familiar.display_name,
+        cave_session_url(config, task_id)
+    )
+}
+
+fn pr_opened_comment(config: &Config, task_id: &str, pr_number: u64) -> String {
+    format!(
+        "PR #{pr_number} opened.\n\nSession: {}",
+        cave_session_url(config, task_id)
+    )
 }
 
 fn pr_title(result: &SessionResult, task: &Task) -> String {
@@ -618,6 +626,8 @@ fn task_issue_number(kind: &TaskKind) -> Option<u64> {
 mod disposition_tests {
     use super::*;
     use coven_github_api::{CommitInfo, HEADLESS_CONTRACT_VERSION};
+    use coven_github_config::{GitHubAppConfig, ServerConfig, WorkerConfig};
+    use std::path::PathBuf;
 
     fn result(status: SessionStatus, branch: Option<&str>, commits: usize) -> SessionResult {
         SessionResult {
@@ -686,6 +696,76 @@ mod disposition_tests {
             disp.conclusion,
             check_run::CheckConclusion::ActionRequired
         ));
+    }
+
+    fn config_with_cave(base_url: Option<&str>) -> Config {
+        Config {
+            server: ServerConfig {
+                bind: "127.0.0.1:0".to_string(),
+                cave_base_url: base_url.map(str::to_string),
+            },
+            github: GitHubAppConfig {
+                app_id: 1,
+                private_key_path: PathBuf::from("private.pem"),
+                webhook_secret: "secret".to_string(),
+                api_base_url: None,
+            },
+            worker: WorkerConfig {
+                concurrency: 1,
+                coven_code_bin: PathBuf::from("coven-code"),
+                workspace_root: PathBuf::from("/tmp/coven-github-test"),
+                timeout_secs: 30,
+                max_retries: 1,
+            },
+            familiars: vec![],
+        }
+    }
+
+    #[test]
+    fn cave_session_url_targets_the_exact_session() {
+        let config = config_with_cave(Some("https://cave.example.test/"));
+        assert_eq!(
+            cave_session_url(&config, "task-42"),
+            "https://cave.example.test/sessions/task-42"
+        );
+    }
+
+    #[test]
+    fn cave_session_url_uses_hosted_default_when_unset() {
+        let config = config_with_cave(None);
+        assert_eq!(
+            cave_session_url(&config, "task-42"),
+            "https://cave.opencoven.ai/sessions/task-42"
+        );
+    }
+
+    #[test]
+    fn task_comments_are_direct_and_link_to_the_session() {
+        let config = config_with_cave(Some("https://cave.example.test"));
+        let familiar = FamiliarConfig {
+            id: "cody".to_string(),
+            display_name: "Cody".to_string(),
+            bot_username: "coven-cody[bot]".to_string(),
+            model: None,
+            skills: vec![],
+            trigger_labels: vec![],
+        };
+
+        let started = starting_comment(&config, &familiar, "task-42");
+        assert!(started.contains("Cody is working on this"));
+        assert!(started.contains("https://cave.example.test/sessions/task-42"));
+        assert!(
+            !started.contains('👋') && !started.contains('→'),
+            "starting comment should be calm operator copy, not decorative chrome: {started}"
+        );
+
+        let opened = pr_opened_comment(&config, "task-42", 17);
+        assert!(opened.contains("PR #17 opened"));
+        assert!(opened.contains("https://cave.example.test/sessions/task-42"));
+        assert!(
+            !opened.contains('✅') && !opened.contains('→'),
+            "PR comment should stay concise and actionable: {opened}"
+        );
     }
 }
 

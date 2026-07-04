@@ -30,7 +30,7 @@ enum Command {
         #[arg(long, default_value = "config/local.toml")]
         config: PathBuf,
     },
-    /// Validate a config file and report missing or placeholder values.
+    /// Validate a config file and print actionable next steps.
     ///
     /// Exits non-zero if any error-severity problem is found, so it doubles as
     /// a pre-flight check in CI or a container entrypoint.
@@ -145,6 +145,7 @@ fn run_doctor(config_path: &std::path::Path) -> i32 {
             Severity::Warning => "! warn ",
         };
         eprintln!("{mark}  {:<28}  {}", d.field, d.message);
+        eprintln!("         {:<28}  next: {}", "", d.next_step);
     }
 
     if diagnostics.is_empty() {
@@ -152,6 +153,10 @@ fn run_doctor(config_path: &std::path::Path) -> i32 {
             "✓ config at {} looks good — {} familiar(s) configured.",
             config_path.display(),
             config.familiars.len()
+        );
+        println!(
+            "next: coven-github serve --config {}",
+            config_path.display()
         );
     } else {
         eprintln!(

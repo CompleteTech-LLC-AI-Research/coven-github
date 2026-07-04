@@ -3,3 +3,4 @@ config/local.toml
 keys/
 *.pem
 .env
+.DS_Store

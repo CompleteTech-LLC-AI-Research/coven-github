@@ -222,21 +222,26 @@ pub struct Diagnostic {
     pub severity: Severity,
     pub field: String,
     pub message: String,
+    pub next_step: String,
 }
 
 impl Diagnostic {
     fn error(field: &str, message: impl Into<String>) -> Self {
+        let message = message.into();
         Self {
             severity: Severity::Error,
             field: field.to_string(),
-            message: message.into(),
+            next_step: next_step_for(field, &message).to_string(),
+            message,
         }
     }
     fn warning(field: &str, message: impl Into<String>) -> Self {
+        let message = message.into();
         Self {
             severity: Severity::Warning,
             field: field.to_string(),
-            message: message.into(),
+            next_step: next_step_for(field, &message).to_string(),
+            message,
         }
     }
     pub fn is_error(&self) -> bool {
@@ -246,6 +251,31 @@ impl Diagnostic {
 
 const PLACEHOLDER_SECRETS: &[&str] =
     &["CHANGE_ME", "CHANGEME", "changeme", "your-secret", "secret"];
+
+fn next_step_for(field: &str, _message: &str) -> &'static str {
+    match field {
+        "github.app_id" => "Copy the numeric App ID from the GitHub App settings page into github.app_id.",
+        "github.private_key_path" => {
+            "Download the GitHub App private key PEM and set github.private_key_path to that file."
+        }
+        "github.webhook_secret" => {
+            "Generate or copy the GitHub App webhook secret and set github.webhook_secret."
+        }
+        "worker.concurrency" => "Set worker.concurrency to 1 or more.",
+        "worker.coven_code_bin" => {
+            "Install coven-code with headless support or set worker.coven_code_bin to the binary path."
+        }
+        "familiars" => "Add at least one [[familiars]] block for the bot account that should receive work.",
+        "familiars[].id" => "Give each familiar a stable, unique id.",
+        "familiars[].bot_username" => {
+            "Set familiars[].bot_username to the GitHub App bot login, usually ending in [bot]."
+        }
+        "familiars[].trigger_labels" => {
+            "Add labels such as coven:fix if this familiar should run from labels, or rely on assignment/mentions only."
+        }
+        _ => "Update this config field, then rerun coven-github doctor.",
+    }
+}
 
 enum PathStatus {
     Ok,
@@ -453,6 +483,51 @@ mod tests {
         assert!(errs.contains(&"worker.coven_code_bin"));
         assert!(errs.contains(&"worker.concurrency"));
         assert!(errs.contains(&"familiars"));
+    }
+
+    #[test]
+    fn first_run_errors_include_operator_next_steps() {
+        let dir = tmpdir();
+        let cfg = config_with(
+            GitHubAppConfig {
+                app_id: 0,
+                private_key_path: dir.join("does-not-exist.pem"),
+                webhook_secret: "CHANGE_ME".into(),
+                api_base_url: None,
+            },
+            WorkerConfig {
+                concurrency: 0,
+                coven_code_bin: dir.join("nope-not-here"),
+                workspace_root: dir.clone(),
+                timeout_secs: 600,
+                max_retries: 2,
+            },
+            vec![],
+        );
+
+        let diags = cfg.check();
+        let app_id = diags
+            .iter()
+            .find(|d| d.field == "github.app_id")
+            .expect("missing App ID should be diagnosed");
+        assert!(
+            app_id.next_step.contains("GitHub App settings"),
+            "diagnostic should tell the operator where to get the App ID: {app_id:?}"
+        );
+
+        let bin = diags
+            .iter()
+            .find(|d| d.field == "worker.coven_code_bin")
+            .expect("missing coven-code should be diagnosed");
+        assert!(
+            bin.next_step.contains("Install coven-code"),
+            "diagnostic should tell the operator how to unblock headless runs: {bin:?}"
+        );
+
+        assert!(
+            diags.iter().all(|d| !d.next_step.trim().is_empty()),
+            "every first-run diagnostic should include a concrete next step: {diags:?}"
+        );
     }
 
     #[test]
