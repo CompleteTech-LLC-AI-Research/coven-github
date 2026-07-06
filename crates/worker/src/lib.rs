@@ -7,8 +7,8 @@ use tokio::process::Command;
 use tracing::{error, info, warn};
 
 use coven_github_api::{
-    check_run, installation, pr, repo, tasks::TaskStore, SessionResult, SessionStatus, Task,
-    TaskKind, DEFAULT_API_BASE_URL,
+    check_run, installation, pr, repo, tasks::TaskStore, ReviewEvidenceStatus, ReviewMode,
+    SessionResult, SessionStatus, Task, TaskKind, DEFAULT_API_BASE_URL,
 };
 use coven_github_config::{Config, FamiliarConfig};
 
@@ -506,6 +506,11 @@ async fn read_result(result_path: &Path) -> Result<SessionResult> {
         .await
         .map_err(|_| anyhow::anyhow!("result.json not written by coven-code"))?;
     let result: SessionResult = serde_json::from_slice(&bytes)?;
+    validate_result_contract(&result)?;
+    Ok(result)
+}
+
+fn validate_result_contract(result: &SessionResult) -> Result<()> {
     if result.contract_version != coven_github_api::HEADLESS_CONTRACT_VERSION {
         anyhow::bail!(
             "unsupported result contract_version {}; expected {}",
@@ -513,7 +518,17 @@ async fn read_result(result_path: &Path) -> Result<SessionResult> {
             coven_github_api::HEADLESS_CONTRACT_VERSION
         );
     }
-    Ok(result)
+    if matches!(
+        result.review.mode,
+        ReviewMode::PullRequest | ReviewMode::ReviewComment
+    ) && result.review.evidence_status == ReviewEvidenceStatus::NotApplicable
+    {
+        anyhow::bail!(
+            "review evidence_status not_applicable is invalid for {:?}",
+            result.review.mode
+        );
+    }
+    Ok(())
 }
 
 fn cave_base_url(config: &Config) -> &str {
@@ -651,6 +666,29 @@ mod result_tests {
             .expect_err("v1 result must be rejected");
         assert!(
             format!("{error:#}").contains("unsupported result contract_version 1"),
+            "unexpected error: {error:#}"
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn read_result_rejects_not_applicable_evidence_for_review_modes() {
+        let path = std::env::temp_dir().join(format!(
+            "coven-github-result-review-evidence-{}.json",
+            uuid::Uuid::new_v4()
+        ));
+        fs::write(
+            &path,
+            r#"{"contract_version":"2","status":"success","branch":null,"commits":[],"files_changed":[],"summary":"s","pr_body":"","review":{"mode":"pull_request","evidence_status":"not_applicable","reviewed_files":["src/lib.rs"],"supporting_files":[],"findings":[],"tests_run":[],"no_findings_reason":"reviewed supplied file","limitations":[]},"exit_reason":null}"#,
+        )
+        .expect("result fixture should be written");
+
+        let error = read_result(&path)
+            .await
+            .expect_err("review result must reject not_applicable evidence");
+        assert!(
+            format!("{error:#}").contains("review evidence_status not_applicable is invalid"),
             "unexpected error: {error:#}"
         );
 

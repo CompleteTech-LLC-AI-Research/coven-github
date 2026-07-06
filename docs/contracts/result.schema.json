@@ -114,6 +114,11 @@
             "required": ["mode"]
           },
           "then": {
+            "properties": {
+              "evidence_status": {
+                "enum": ["complete", "partial", "missing"]
+              }
+            },
             "anyOf": [
               { "properties": { "reviewed_files": { "minItems": 1 } }, "required": ["reviewed_files"] },
               { "properties": { "evidence_status": { "const": "missing" } }, "required": ["evidence_status"] }

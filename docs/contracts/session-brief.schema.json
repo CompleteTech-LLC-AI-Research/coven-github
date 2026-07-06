@@ -84,6 +84,15 @@
       "properties": {
         "root": { "type": "string" }
       }
+    },
+    "review_context": {
+      "type": "object",
+      "description": "Optional tokenless hosted-review evidence supplied by the adapter.",
+      "additionalProperties": true
+    },
+    "audit_instruction": {
+      "type": "string",
+      "description": "Optional hosted-review instruction paired with review_context."
     }
   }
 }

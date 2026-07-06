@@ -106,6 +106,8 @@ The adapter is the **producer**; the runtime is the **consumer**. The brief is
 | `familiar.model` | string \| null | BYOM model id; `null`/absent means runtime default. |
 | `familiar.skills` | string[] | Skill ids to load for the session. MAY be empty. |
 | `workspace.root` | string | Absolute path to the pre-cloned, isolated workspace. The runtime operates **inside** this directory and MUST NOT write outside it. |
+| `review_context` | object | Optional tokenless hosted-review evidence supplied by the adapter. When present, it contains PR metadata and changed-file context the runtime MUST inspect before producing review output. |
+| `audit_instruction` | string | Optional hosted-review instruction paired with `review_context`. Consumers that do not implement hosted review MAY ignore it. |
 
 ### 2.2 Task kinds
 

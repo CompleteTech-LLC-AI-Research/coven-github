@@ -39,6 +39,57 @@ fn golden_session_brief_deserializes_into_adapter_type() {
 }
 
 #[test]
+fn hosted_review_session_brief_deserializes_optional_context() {
+    let raw = r#"{
+        "contract_version": "2",
+        "trigger": "pr_review_comment",
+        "repo": {
+            "owner": "OpenCoven",
+            "name": "coven-github",
+            "clone_url": "https://github.com/OpenCoven/coven-github.git",
+            "default_branch": "main"
+        },
+        "task": {
+            "kind": "address_review_comment",
+            "pr_number": 31,
+            "comment_body": "review this",
+            "diff_hunk": null
+        },
+        "familiar": {
+            "id": "cody",
+            "display_name": "Cody",
+            "model": null,
+            "skills": []
+        },
+        "workspace": {
+            "root": "/tmp/coven"
+        },
+        "review_context": {
+            "pr_number": 31,
+            "files": [{ "path": "src/lib.rs" }]
+        },
+        "audit_instruction": "Inspect supplied changed-file patches."
+    }"#;
+
+    let brief: SessionBrief =
+        serde_json::from_str(raw).expect("hosted review brief must match SessionBrief");
+
+    assert_eq!(brief.trigger, "pr_review_comment");
+    assert_eq!(
+        brief
+            .review_context
+            .as_ref()
+            .and_then(|context| context.get("pr_number"))
+            .and_then(serde_json::Value::as_u64),
+        Some(31)
+    );
+    assert_eq!(
+        brief.audit_instruction.as_deref(),
+        Some("Inspect supplied changed-file patches.")
+    );
+}
+
+#[test]
 fn golden_result_deserializes_into_adapter_type() {
     let raw = fixture("result.example.json");
     let result: SessionResult =

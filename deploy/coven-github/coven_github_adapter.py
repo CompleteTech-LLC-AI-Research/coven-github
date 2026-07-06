@@ -229,6 +229,24 @@ def labels_include_trigger(labels, policy):
     return False
 
 
+def issue_assigned_to_bot(issue, policy):
+    wanted = {str(username).lower() for username in (policy.get("bot_usernames") or [])}
+    if not wanted:
+        return False
+
+    candidates = []
+    assignee = issue.get("assignee")
+    if assignee:
+        candidates.append(assignee)
+    candidates.extend(issue.get("assignees") or [])
+
+    for candidate in candidates:
+        login = candidate.get("login") if isinstance(candidate, dict) else str(candidate)
+        if str(login).lower() in wanted:
+            return True
+    return False
+
+
 def trigger_enabled(policy, trigger):
     enabled = policy.get("enabled_triggers")
     if enabled is None:
@@ -324,19 +342,19 @@ def build_task_from_event(event_name, delivery_id, payload, policy):
     if event_name == "issues":
         issue = payload.get("issue") or {}
         action = payload.get("action")
-        if action not in ("assigned", "labeled", "opened"):
+        if action not in ("assigned", "labeled"):
             return ignored(base, "unsupported_issue_action")
         if action == "assigned" and not trigger_enabled(policy, "issue_assigned"):
             return ignored(base, "issue_assigned_not_enabled")
+        if action == "assigned" and not issue_assigned_to_bot(issue, policy):
+            return ignored(base, "issue_assigned_to_unmanaged_user")
         if action == "labeled" and not labels_include_trigger(issue.get("labels"), policy):
             return ignored(base, "issue_label_not_enabled")
         if action == "labeled" and not trigger_enabled(policy, "issue_label"):
             return ignored(base, "issue_label_not_enabled")
-        if action == "opened" and not trigger_enabled(policy, "issue_mention"):
-            return ignored(base, "issue_mention_not_enabled")
         base.update(
             {
-                "trigger": "issue_assigned" if action == "assigned" else "issue_mention",
+                "trigger": "issue_assigned",
                 "task": {
                     "kind": "fix_issue",
                     "issue_number": int(issue.get("number") or 0),

@@ -27,6 +27,10 @@ pub struct SessionBrief {
     pub task: TaskBrief,
     pub familiar: FamiliarBrief,
     pub workspace: WorkspaceBrief,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_context: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audit_instruction: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -136,6 +140,8 @@ pub fn build(
         workspace: WorkspaceBrief {
             root: workspace.to_string_lossy().to_string(),
         },
+        review_context: None,
+        audit_instruction: None,
     }
 }
 
