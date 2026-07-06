@@ -7,12 +7,14 @@ use tokio::process::Command;
 use tracing::{error, info, warn};
 
 use coven_github_api::{
-    check_run, installation, pr, repo, tasks::TaskStore, ReviewEvidenceStatus, ReviewMode,
-    SessionResult, SessionStatus, Task, TaskKind, DEFAULT_API_BASE_URL,
+    check_run, installation, installation::TokenRole, pr, repo, tasks::TaskStore,
+    ReviewEvidenceStatus, ReviewMode, SessionResult, SessionStatus, Task, TaskKind,
+    DEFAULT_API_BASE_URL,
 };
 use coven_github_config::{Config, FamiliarConfig};
 
 pub mod brief;
+pub mod redact;
 
 /// Base unit for exponential backoff between retry-safe coven-code attempts.
 /// Attempt `n` sleeps `RETRY_BACKOFF_BASE * 2^n` (so 2s, 4s, … in production).
@@ -67,18 +69,21 @@ async fn execute_task(config: &Config, task_store: TaskStore, task: Task) -> Res
     // failed so it stays visible in Cave, then propagate.
     let prepared = async {
         let private_key = std::fs::read_to_string(&config.github.private_key_path)?;
-        let token = installation::get_token_with_base_url(
-            api_base_url,
-            config.github.app_id,
-            &private_key,
-            task.installation_id,
-        )
-        .await?;
+        let minter = Minter::App {
+            api_base_url: api_base_url.to_string(),
+            app_id: config.github.app_id,
+            private_key,
+            installation_id: task.installation_id,
+            repo_name: task.repo_name.clone(),
+        };
+        // Adapter-held orchestration authority: resolve refs, drive the Check
+        // Run, post progress comments. The agent never sees this token.
+        let orchestration = minter.mint(TokenRole::Orchestration).await?;
 
         // Resolve target refs and base branch from live GitHub state. Check Runs
         // must attach to an immutable commit SHA, and PRs must target the repo's
         // actual base branch rather than a hardcoded "main".
-        let targets = resolve_targets(api_base_url, &token, &task).await?;
+        let targets = resolve_targets(api_base_url, &orchestration, &task).await?;
 
         // Create Check Run against the resolved head SHA. From this point on the
         // Check Run MUST reach a terminal conclusion on every code path — a flaky
@@ -88,7 +93,7 @@ async fn execute_task(config: &Config, task_store: TaskStore, task: Task) -> Res
         let details_url = cave_session_url(config, &task.id);
         let check_id = check_run::create_with_base_url(
             api_base_url,
-            &token,
+            &orchestration,
             &task.repo_owner,
             &task.repo_name,
             &targets.head_sha,
@@ -96,11 +101,11 @@ async fn execute_task(config: &Config, task_store: TaskStore, task: Task) -> Res
             Some(details_url.as_str()),
         )
         .await?;
-        Ok::<_, anyhow::Error>((token, targets, check_id))
+        Ok::<_, anyhow::Error>((minter, orchestration, targets, check_id))
     }
     .await;
 
-    let (token, targets, check_id) = match prepared {
+    let (minter, orchestration, targets, check_id) = match prepared {
         Ok(prepared) => prepared,
         Err(e) => {
             error!(task_id = %task.id, "pre-flight failed before check run: {e:#}");
@@ -124,7 +129,8 @@ async fn execute_task(config: &Config, task_store: TaskStore, task: Task) -> Res
         config,
         &task,
         familiar,
-        &token,
+        &minter,
+        &orchestration,
         api_base_url,
         &targets,
         &workspace,
@@ -144,7 +150,7 @@ async fn execute_task(config: &Config, task_store: TaskStore, task: Task) -> Res
                 .await;
             if let Err(e) = check_run::complete_with_base_url(
                 api_base_url,
-                &token,
+                &orchestration,
                 &task.repo_owner,
                 &task.repo_name,
                 check_id,
@@ -162,13 +168,15 @@ async fn execute_task(config: &Config, task_store: TaskStore, task: Task) -> Res
             task_store.mark_failed(&task.id).await;
             if let Err(ce) = check_run::complete_with_base_url(
                 api_base_url,
-                &token,
+                &orchestration,
                 &task.repo_owner,
                 &task.repo_name,
                 check_id,
                 check_run::CheckConclusion::Failure,
                 "Error",
-                &format!("Task failed: {e}"),
+                // Error chains can embed response bodies; scrub token-shaped
+                // strings before they reach the published Check Run summary.
+                &redact::redact(&format!("Task failed: {e}"), &[&orchestration]),
             )
             .await
             {
@@ -186,6 +194,49 @@ struct Published {
     opened_pr: Option<u64>,
 }
 
+/// Mints repo-scoped installation tokens for one task. Tests substitute
+/// `Fixed` so publication paths run without GitHub App credentials.
+pub(crate) enum Minter {
+    App {
+        api_base_url: String,
+        app_id: u64,
+        private_key: String,
+        installation_id: u64,
+        repo_name: String,
+    },
+    #[cfg(test)]
+    Fixed(std::collections::HashMap<TokenRole, String>),
+}
+
+impl Minter {
+    async fn mint(&self, role: TokenRole) -> Result<String> {
+        match self {
+            Minter::App {
+                api_base_url,
+                app_id,
+                private_key,
+                installation_id,
+                repo_name,
+            } => {
+                installation::get_scoped_token_with_base_url(
+                    api_base_url,
+                    *app_id,
+                    private_key,
+                    *installation_id,
+                    repo_name,
+                    role,
+                )
+                .await
+            }
+            #[cfg(test)]
+            Minter::Fixed(tokens) => tokens
+                .get(&role)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("no fixed token for role {role:?}")),
+        }
+    }
+}
+
 /// Provisions the workspace, runs coven-code with the retry policy, and publishes
 /// the outcome (PR + comments). Returns `Err` only for failures that should mark
 /// the task — and complete the Check Run — as failed: workspace/brief I/O errors
@@ -197,7 +248,8 @@ async fn run_and_publish(
     config: &Config,
     task: &Task,
     familiar: &FamiliarConfig,
-    token: &str,
+    minter: &Minter,
+    orchestration: &str,
     api_base_url: &str,
     targets: &ResolvedTargets,
     workspace: &Path,
@@ -208,7 +260,14 @@ async fn run_and_publish(
     let brief = brief::build(task, familiar, workspace, &targets.default_branch);
     let brief_path = workspace.join("session-brief.json");
     let result_path = workspace.join("result.json");
-    tokio::fs::write(&brief_path, serde_json::to_string_pretty(&brief)?).await?;
+    let brief_json = serde_json::to_string_pretty(&brief)?;
+    // Belt-and-braces on top of the serialization guard test: refuse to hand
+    // the agent a brief that somehow embeds a live credential.
+    anyhow::ensure!(
+        !redact::contains_live_token(&brief_json, &[orchestration]),
+        "session brief contained a live token; refusing to write it"
+    );
+    tokio::fs::write(&brief_path, brief_json).await?;
 
     // Best-effort "starting" comment — a flaky comment API call must not abort
     // the task or orphan the Check Run.
@@ -216,7 +275,7 @@ async fn run_and_publish(
         let start_msg = starting_comment(config, familiar, &task.id);
         if let Err(e) = pr::post_comment_with_base_url(
             api_base_url,
-            token,
+            orchestration,
             &task.repo_owner,
             &task.repo_name,
             issue_number,
@@ -231,7 +290,7 @@ async fn run_and_publish(
     // Best-effort progress transition; the check is completed regardless below.
     if let Err(e) = check_run::update_with_base_url(
         api_base_url,
-        token,
+        orchestration,
         &task.repo_owner,
         &task.repo_name,
         check_id,
@@ -244,65 +303,58 @@ async fn run_and_publish(
         warn!(task_id = %task.id, "failed to mark check in progress: {e:#}");
     }
 
+    // The agent's only credential: contents:write on the target repo, minted
+    // immediately before spawn and injected via COVEN_GIT_TOKEN (never JSON).
+    let agent_git = minter.mint(TokenRole::AgentGit).await?;
+
     // Run coven-code. Only retry-safe failures (exit 2, timeout, signal) are
     // retried; exit 1 (gave up) and exit 3 (needs input) are terminal.
-    let result = run_session(
+    let mut result = run_session(
         config,
         &brief_path,
         &result_path,
-        token,
+        &agent_git,
         config.worker.max_retries,
     )
     .await?;
+
+    // Scrub token values and token-shaped strings from the envelope before
+    // anything downstream persists or publishes it (task store, comments,
+    // PR body, Check Run output).
+    redact::sanitize_result(&mut result, &[orchestration, &agent_git]);
 
     // Publish according to the terminal disposition of the result.
     let disp = disposition(&result);
     let mut opened_pr = None;
     if disp.open_pr {
         if let Some(branch) = &result.branch {
-            match pr::open_pull_request_with_base_url(
-                api_base_url,
-                token,
-                &task.repo_owner,
-                &task.repo_name,
-                branch,
-                &targets.base_ref,
-                &pr_title(&result, task),
-                &result.pr_body,
-                true, // draft
-            )
-            .await
-            {
-                Ok(pr_num) => {
-                    opened_pr = Some(pr_num);
-                    if let Some(issue_number) = task_issue_number(&task.kind) {
-                        let msg = pr_opened_comment(config, &task.id, pr_num);
-                        if let Err(e) = pr::post_comment_with_base_url(
-                            api_base_url,
-                            token,
-                            &task.repo_owner,
-                            &task.repo_name,
-                            issue_number,
-                            &msg,
-                        )
-                        .await
-                        {
-                            warn!(task_id = %task.id, "failed to post PR comment: {e:#}");
-                        }
-                    }
+            // Write authority for publication is minted only now — after the
+            // envelope passed contract validation and sanitization (issue #4).
+            match minter.mint(TokenRole::Publication).await {
+                Ok(publication) => {
+                    opened_pr = open_draft_pr(
+                        config,
+                        task,
+                        api_base_url,
+                        &publication,
+                        targets,
+                        &result,
+                        branch,
+                    )
+                    .await;
                 }
                 Err(e) => {
-                    // The branch is already pushed; the PR just didn't open.
-                    // Surface it rather than failing the whole task, so the work
-                    // isn't lost from the user's view.
-                    warn!(task_id = %task.id, "failed to open PR: {e:#}");
+                    warn!(task_id = %task.id, "failed to mint publication token: {e:#}");
                     if let Some(issue_number) = task_issue_number(&task.kind) {
-                        let msg = format!(
-                            "I pushed `{branch}` but could not open the PR automatically: {e}. Open the branch manually or check the App's pull-request permission."
+                        let msg = redact::redact(
+                            &format!(
+                                "I pushed `{branch}` but could not obtain publication credentials to open the PR: {e}"
+                            ),
+                            &[orchestration],
                         );
                         let _ = pr::post_comment_with_base_url(
                             api_base_url,
-                            token,
+                            orchestration,
                             &task.repo_owner,
                             &task.repo_name,
                             issue_number,
@@ -321,7 +373,7 @@ async fn run_and_publish(
             let msg = format!("I need input before I can continue:\n\n{}", result.summary);
             if let Err(e) = pr::post_comment_with_base_url(
                 api_base_url,
-                token,
+                orchestration,
                 &task.repo_owner,
                 &task.repo_name,
                 issue_number,
@@ -335,6 +387,76 @@ async fn run_and_publish(
     }
 
     Ok(Published { result, opened_pr })
+}
+
+/// Opens the draft PR and posts the PR-opened comment with post-validation
+/// publication authority. Best-effort: failures are surfaced on the issue
+/// rather than failing the task, since the branch is already pushed.
+async fn open_draft_pr(
+    config: &Config,
+    task: &Task,
+    api_base_url: &str,
+    publication: &str,
+    targets: &ResolvedTargets,
+    result: &SessionResult,
+    branch: &str,
+) -> Option<u64> {
+    match pr::open_pull_request_with_base_url(
+        api_base_url,
+        publication,
+        &task.repo_owner,
+        &task.repo_name,
+        branch,
+        &targets.base_ref,
+        &pr_title(result, task),
+        &result.pr_body,
+        true, // draft
+    )
+    .await
+    {
+        Ok(pr_num) => {
+            if let Some(issue_number) = task_issue_number(&task.kind) {
+                let msg = pr_opened_comment(config, &task.id, pr_num);
+                if let Err(e) = pr::post_comment_with_base_url(
+                    api_base_url,
+                    publication,
+                    &task.repo_owner,
+                    &task.repo_name,
+                    issue_number,
+                    &msg,
+                )
+                .await
+                {
+                    warn!(task_id = %task.id, "failed to post PR comment: {e:#}");
+                }
+            }
+            Some(pr_num)
+        }
+        Err(e) => {
+            // The branch is already pushed; the PR just didn't open. Surface it
+            // rather than failing the whole task, so the work isn't lost from
+            // the user's view.
+            warn!(task_id = %task.id, "failed to open PR: {e:#}");
+            if let Some(issue_number) = task_issue_number(&task.kind) {
+                let msg = redact::redact(
+                    &format!(
+                        "I pushed `{branch}` but could not open the PR automatically: {e}. Open the branch manually or check the App's pull-request permission."
+                    ),
+                    &[publication],
+                );
+                let _ = pr::post_comment_with_base_url(
+                    api_base_url,
+                    publication,
+                    &task.repo_owner,
+                    &task.repo_name,
+                    issue_number,
+                    &msg,
+                )
+                .await;
+            }
+            None
+        }
+    }
 }
 
 /// Terminal disposition of a completed session, derived purely from the result.
@@ -1331,6 +1453,191 @@ mod process_tests {
 
         let attempt = run_coven_code(&config, &brief, &result, "tok").await;
         assert!(matches!(attempt, Attempt::RetrySafe(_)));
+        let _ = fs::remove_dir_all(root);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod publication_tests {
+    use super::*;
+    use coven_github_api::installation::TokenRole;
+    use coven_github_config::{FamiliarConfig, GitHubAppConfig, ServerConfig, WorkerConfig};
+    use std::collections::HashMap;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::PathBuf;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    const ORCHESTRATION: &str = "ghs_orchestration0000000000000000000000";
+    const AGENT_GIT: &str = "ghs_agentgit0000000000000000000000000000";
+    const PUBLICATION: &str = "ghs_publication0000000000000000000000000";
+
+    fn fixed_minter() -> Minter {
+        Minter::Fixed(HashMap::from([
+            (TokenRole::Orchestration, ORCHESTRATION.to_string()),
+            (TokenRole::AgentGit, AGENT_GIT.to_string()),
+            (TokenRole::Publication, PUBLICATION.to_string()),
+        ]))
+    }
+
+    #[tokio::test]
+    async fn publication_uses_post_validation_token_and_leaks_nothing() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/repos/OpenCoven/demo/issues/42/comments"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({"id": 1})))
+            .mount(&server)
+            .await;
+        Mock::given(method("PATCH"))
+            .and(path("/repos/OpenCoven/demo/check-runs/7"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/repos/OpenCoven/demo/pulls"))
+            .respond_with(
+                ResponseTemplate::new(201).set_body_json(serde_json::json!({"number": 17})),
+            )
+            .mount(&server)
+            .await;
+
+        // Fake coven-code: records the git token it was handed, then emits a
+        // result that tries to leak that token through free-text fields.
+        let script = r#"#!/usr/bin/env bash
+printf '%s' "$COVEN_GIT_TOKEN" > "$(dirname "$5")/seen-token"
+cat > "$5" <<EOF
+{"contract_version":"2","status":"success","branch":"cody/fix-42","commits":[{"sha":"a1","message":"msg $COVEN_GIT_TOKEN"}],"files_changed":[],"summary":"done $COVEN_GIT_TOKEN","pr_body":"body $COVEN_GIT_TOKEN","review":{"mode":"none","evidence_status":"not_applicable","reviewed_files":[],"supporting_files":[],"findings":[],"tests_run":[],"no_findings_reason":null,"limitations":[]},"exit_reason":null}
+EOF
+exit 0
+"#;
+        let root =
+            std::env::temp_dir().join(format!("coven-github-pub-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).expect("test dir should be created");
+        let script_path = root.join("fake-coven-code.sh");
+        fs::write(&script_path, script).expect("script should be written");
+        fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755))
+            .expect("script should be executable");
+
+        let familiar = FamiliarConfig {
+            id: "cody".to_string(),
+            display_name: "Cody".to_string(),
+            bot_username: "coven-cody[bot]".to_string(),
+            model: None,
+            skills: vec![],
+            trigger_labels: vec![],
+        };
+        let config = Config {
+            server: ServerConfig {
+                bind: "127.0.0.1:0".to_string(),
+                cave_base_url: None,
+            },
+            github: GitHubAppConfig {
+                app_id: 1,
+                private_key_path: PathBuf::from("private.pem"),
+                webhook_secret: "secret".to_string(),
+                api_base_url: Some(server.uri()),
+            },
+            worker: WorkerConfig {
+                concurrency: 1,
+                coven_code_bin: script_path,
+                workspace_root: root.clone(),
+                timeout_secs: 30,
+                max_retries: 0,
+            },
+            familiars: vec![familiar.clone()],
+        };
+        let task = Task {
+            id: "task-pub".to_string(),
+            installation_id: 1,
+            repo_owner: "OpenCoven".to_string(),
+            repo_name: "demo".to_string(),
+            familiar_id: "cody".to_string(),
+            kind: TaskKind::FixIssue {
+                issue_number: 42,
+                issue_title: "t".to_string(),
+                issue_body: "b".to_string(),
+            },
+        };
+        let targets = ResolvedTargets {
+            default_branch: "main".to_string(),
+            base_ref: "main".to_string(),
+            head_sha: "abc123".to_string(),
+        };
+        let workspace = root.join("ws");
+
+        let published = run_and_publish(
+            &config,
+            &task,
+            &familiar,
+            &fixed_minter(),
+            ORCHESTRATION,
+            &server.uri(),
+            &targets,
+            &workspace,
+            7,
+        )
+        .await
+        .expect("publication should succeed");
+
+        assert_eq!(published.opened_pr, Some(17));
+
+        // The agent received exactly the AgentGit-scoped token.
+        let seen = fs::read_to_string(workspace.join("seen-token"))
+            .expect("fake coven-code should record its token");
+        assert_eq!(seen, AGENT_GIT);
+
+        // The sanitized envelope carries no live token values.
+        assert!(!published.result.summary.contains(AGENT_GIT));
+        assert!(published.result.summary.contains(redact::REDACTED));
+        assert!(!published.result.pr_body.contains(AGENT_GIT));
+
+        // No outgoing GitHub payload contains any token value…
+        let requests = server.received_requests().await.expect("requests recorded");
+        assert!(!requests.is_empty());
+        for request in &requests {
+            let body = String::from_utf8_lossy(&request.body);
+            for token in [ORCHESTRATION, AGENT_GIT, PUBLICATION] {
+                assert!(
+                    !body.contains(token),
+                    "{} {} leaked a token: {body}",
+                    request.method,
+                    request.url
+                );
+            }
+        }
+        // …and each endpoint was called with the authority its phase allows.
+        let auth_of = |p: &str, m: &str| -> Vec<String> {
+            requests
+                .iter()
+                .filter(|r| r.url.path() == p && r.method.as_str() == m)
+                .map(|r| {
+                    r.headers
+                        .get("authorization")
+                        .expect("authorization header present")
+                        .to_str()
+                        .expect("ascii header")
+                        .to_string()
+                })
+                .collect()
+        };
+        assert_eq!(
+            auth_of("/repos/OpenCoven/demo/pulls", "POST"),
+            vec![format!("Bearer {PUBLICATION}")]
+        );
+        assert_eq!(
+            auth_of("/repos/OpenCoven/demo/check-runs/7", "PATCH"),
+            vec![format!("Bearer {ORCHESTRATION}")]
+        );
+        // Starting comment (orchestration), then PR-opened comment (publication).
+        assert_eq!(
+            auth_of("/repos/OpenCoven/demo/issues/42/comments", "POST"),
+            vec![
+                format!("Bearer {ORCHESTRATION}"),
+                format!("Bearer {PUBLICATION}"),
+            ]
+        );
+
         let _ = fs::remove_dir_all(root);
     }
 }
