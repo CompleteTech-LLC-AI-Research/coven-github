@@ -192,9 +192,9 @@ the intended code. It is required on every result. Non-review tasks MUST set
 | `no_findings_reason` | string \| null | File-backed explanation for a clean review. MAY be `null` for degraded/partial output when `evidence_status` and `limitations` explain why a substantive clean-review conclusion was not possible. |
 | `limitations` | string[] | Evidence gaps, skipped checks, or other caveats. |
 
-Each finding carries `severity`, `file`, optional `line`, `title`, `body`, and
-optional `recommendation`. Valid severities are `info`, `low`, `medium`, `high`,
-and `critical`.
+Each finding carries required `severity`, `file`, `line`, `title`, `body`, and
+`recommendation` fields. `line` and `recommendation` may be `null`. Valid
+severities are `info`, `low`, `medium`, `high`, and `critical`.
 
 ### 3.3 `status`
 
