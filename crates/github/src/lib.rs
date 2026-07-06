@@ -12,7 +12,7 @@ pub const DEFAULT_API_BASE_URL: &str = "https://api.github.com";
 
 /// Major version of the coven-code headless execution contract this adapter
 /// speaks. See `docs/headless-contract.md`. Bump only on breaking changes.
-pub const HEADLESS_CONTRACT_VERSION: &str = "1";
+pub const HEADLESS_CONTRACT_VERSION: &str = "2";
 
 fn default_contract_version() -> String {
     HEADLESS_CONTRACT_VERSION.to_string()
@@ -187,6 +187,7 @@ pub struct SessionResult {
     pub files_changed: Vec<String>,
     pub summary: String,
     pub pr_body: String,
+    pub review: ReviewResult,
     pub exit_reason: Option<ExitReason>,
 }
 
@@ -203,6 +204,86 @@ pub enum SessionStatus {
 pub struct CommitInfo {
     pub sha: String,
     pub message: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ReviewResult {
+    pub mode: ReviewMode,
+    pub evidence_status: ReviewEvidenceStatus,
+    pub reviewed_files: Vec<String>,
+    pub supporting_files: Vec<String>,
+    pub findings: Vec<ReviewFinding>,
+    pub tests_run: Vec<ReviewTestRun>,
+    pub no_findings_reason: Option<String>,
+    pub limitations: Vec<String>,
+}
+
+impl ReviewResult {
+    pub fn none() -> Self {
+        Self {
+            mode: ReviewMode::None,
+            evidence_status: ReviewEvidenceStatus::NotApplicable,
+            reviewed_files: Vec::new(),
+            supporting_files: Vec::new(),
+            findings: Vec::new(),
+            tests_run: Vec::new(),
+            no_findings_reason: None,
+            limitations: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewMode {
+    None,
+    PullRequest,
+    ReviewComment,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewEvidenceStatus {
+    NotApplicable,
+    Complete,
+    Partial,
+    Missing,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ReviewFinding {
+    pub severity: ReviewSeverity,
+    pub file: String,
+    pub line: Option<u64>,
+    pub title: String,
+    pub body: String,
+    pub recommendation: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewSeverity {
+    Info,
+    Low,
+    Medium,
+    High,
+    Critical,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ReviewTestRun {
+    pub command: String,
+    pub status: ReviewTestStatus,
+    pub output_summary: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewTestStatus {
+    Passed,
+    Failed,
+    NotRun,
+    Unknown,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]

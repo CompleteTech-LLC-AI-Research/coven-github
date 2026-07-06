@@ -625,7 +625,7 @@ fn task_issue_number(kind: &TaskKind) -> Option<u64> {
 #[cfg(test)]
 mod disposition_tests {
     use super::*;
-    use coven_github_api::{CommitInfo, HEADLESS_CONTRACT_VERSION};
+    use coven_github_api::{CommitInfo, ReviewResult, HEADLESS_CONTRACT_VERSION};
     use coven_github_config::{GitHubAppConfig, ServerConfig, WorkerConfig};
     use std::path::PathBuf;
 
@@ -643,6 +643,7 @@ mod disposition_tests {
             files_changed: vec![],
             summary: "summary".to_string(),
             pr_body: "body".to_string(),
+            review: ReviewResult::none(),
             exit_reason: None,
         }
     }
@@ -828,7 +829,7 @@ mod process_tests {
     /// A minimal contract-valid result.json with the given status/exit_reason.
     fn result_json(status: &str, exit_reason: &str) -> String {
         format!(
-            r#"{{"contract_version":"1","status":"{status}","branch":null,"commits":[],"files_changed":[],"summary":"s","pr_body":"","exit_reason":{exit_reason}}}"#
+            r#"{{"contract_version":"2","status":"{status}","branch":null,"commits":[],"files_changed":[],"summary":"s","pr_body":"","review":{{"mode":"none","evidence_status":"not_applicable","reviewed_files":[],"supporting_files":[],"findings":[],"tests_run":[],"no_findings_reason":null,"limitations":[]}},"exit_reason":{exit_reason}}}"#
         )
     }
 
