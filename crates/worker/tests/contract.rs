@@ -5,7 +5,10 @@
 //! If these fail, either the runtime contract drifted or the docs are stale —
 //! fix one of them, do not just bless the test.
 
-use coven_github_api::{ExitReason, SessionResult, SessionStatus, HEADLESS_CONTRACT_VERSION};
+use coven_github_api::{
+    ExitReason, ReviewEvidenceStatus, ReviewMode, SessionResult, SessionStatus,
+    HEADLESS_CONTRACT_VERSION,
+};
 use coven_github_worker::brief::SessionBrief;
 
 fn fixture(name: &str) -> String {
@@ -43,6 +46,11 @@ fn golden_result_deserializes_into_adapter_type() {
 
     assert_eq!(result.contract_version, HEADLESS_CONTRACT_VERSION);
     assert_eq!(result.status, SessionStatus::Success);
+    assert_eq!(result.review.mode, ReviewMode::None);
+    assert_eq!(
+        result.review.evidence_status,
+        ReviewEvidenceStatus::NotApplicable
+    );
     assert_eq!(result.branch.as_deref(), Some("cody/fix-issue-42"));
     assert_eq!(result.commits.len(), 1);
     assert_eq!(
@@ -63,6 +71,15 @@ fn result_without_contract_version_defaults_to_current() {
         "files_changed": [],
         "summary": "Could not reproduce.",
         "pr_body": "",
+        "review": {
+            "mode": "none",
+            "evidence_status": "not_applicable",
+            "reviewed_files": [],
+            "findings": [],
+            "tests_run": [],
+            "no_findings_reason": null,
+            "limitations": []
+        },
         "exit_reason": "ambiguous_spec"
     }"#;
     let result: SessionResult = serde_json::from_str(raw).expect("legacy result must parse");
