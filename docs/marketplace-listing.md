@@ -2,24 +2,26 @@
 
 How the hosted OpenCoven GitHub App gets listed, priced, and paid on GitHub
 Marketplace. The tier matrix and dollar figures live in
-[pricing.md](pricing.md); the enforcement behind every promise — including
-purchase-driven entitlements — is already in the adapter. This document is
-the launch runbook for the listing itself.
+[pricing.md](pricing.md). This document is the launch runbook for the listing
+itself, and depends on the purchase-driven entitlement work in #66 before the
+paid Marketplace gate can go live.
 
 ## Why Marketplace (and not Stripe first)
 
-- The buyer's unit is the **GitHub App installation** — exactly what
-  Marketplace sells. Choose plan → install → billed on the existing GitHub
-  invoice. No card form, no separate account, no procurement detour.
-- `marketplace_purchase` webhooks feed the adapter's entitlement tables
-  directly (account plan + installation mapping), so a purchase provisions
-  service with **zero operator action**.
+- Marketplace bills the purchasing **GitHub account** (organization or user)
+  on the existing GitHub invoice, and the adapter maps that account to GitHub
+  App installations for tenancy. No card form, no separate account, no
+  procurement detour.
+- After #66 lands, `marketplace_purchase` webhooks feed the adapter's
+  entitlement tables directly (account plan + installation mapping), so a
+  purchase provisions service with **zero operator action**.
 - Native 14-day free trials match the launch posture in
   [pricing.md](pricing.md) without building trial logic.
 
-**Fallback:** if listing review stalls, Stripe Checkout keyed to the
-installation id ships in days — the entitlement layer is billing-source
-agnostic (`account_plans.source`), only the webhook origin differs.
+**Fallback:** if listing review stalls, Stripe Checkout keyed to the purchasing
+account and installation mapping ships in days after #66 — the entitlement
+layer is billing-source agnostic (`account_plans.source`), only the webhook
+origin differs.
 
 ## Plans to publish
 
@@ -30,9 +32,9 @@ agnostic (`account_plans.source`), only the webhook origin differs.
 
 Notes:
 
-- **Plan names must contain "Starter" / "Team"** — the adapter classifies
-  plan names by substring, and unknown names fail safe to Starter limits.
-  Keep tier words in any future rename.
+- **After #66 lands, plan names must contain "Starter" / "Team"** — the
+  adapter classifies plan names by substring, and unknown names fail safe to
+  Starter limits. Keep tier words in any future rename.
 - **Hosted Dedicated is not listed.** Custom contracts, annual billing, and
   SLAs don't fit Marketplace plan mechanics; Dedicated is sales-led with
   direct invoicing, provisioned via an explicit `[[installations]]` entry
@@ -41,12 +43,13 @@ Notes:
 
 ## Requirements checklist
 
-Marketplace listing requirements, mapped to their current state:
+Marketplace listing requirements, mapped to current state and launch
+dependencies:
 
-- [x] App handles `marketplace_purchase` events (purchase, change, cancel,
-      trial) — adapter webhook route, idempotent + audited.
-- [x] Plan limits enforced server-side — intake daily cap, claim-time
-      concurrency, `require_plan` paid gate.
+- [ ] Land #66: app handles `marketplace_purchase` events (purchase, change,
+      cancel, trial) with an idempotent, audited adapter webhook route.
+- [ ] Land #66: plan limits enforced server-side — intake daily cap,
+      claim-time concurrency, `require_plan` paid gate.
 - [x] Customer data deleted on uninstall — delete-on-uninstall purge.
 - [ ] App set **public** (the hosted App only; the self-host manifest in
       [app-manifest.json](app-manifest.json) stays private-by-default).
@@ -74,7 +77,7 @@ Marketplace listing requirements, mapped to their current state:
 
 ## Hosted deployment configuration
 
-The hosted control plane runs with:
+After #66 lands, the hosted control plane runs with:
 
 ```toml
 [billing]
@@ -88,14 +91,16 @@ Self-hosted deployments never set this; the default is off.
 ## Launch sequence
 
 1. Verify the OpenCoven publisher org; add support/privacy/terms URLs.
-2. Make the hosted App public; confirm `marketplace_purchase` deliveries
+2. Land #66 so Marketplace purchases can create account-level entitlements and
+   map those entitlements to installations.
+3. Make the hosted App public; confirm `marketplace_purchase` deliveries
    reach the production webhook (Marketplace sends them to the App's
    webhook URL).
-3. Create the two paid plans with 14-day trials; enable the OSS-organization
-   discount decision from [pricing.md](pricing.md) open decisions if
-   approved.
-4. Submit the listing for review; run one end-to-end purchase in a sandbox
+4. Create the two paid plans with 14-day trials; if the
+   [pricing.md](pricing.md) OSS-organization discount is approved, enable it
+   before listing review.
+5. Submit the listing for review; run one end-to-end purchase in a sandbox
    org (purchase → trial → task accepted; cancel → `ignored:no_plan`).
-5. Flip `require_plan = true` on the hosted deployment at listing go-live,
+6. Flip `require_plan = true` on the hosted deployment at listing go-live,
    with existing beta installations grandfathered via `[[installations]]`
    entries until they purchase.
