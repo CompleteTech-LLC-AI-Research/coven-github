@@ -346,8 +346,16 @@ name = "coven-github-config"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "coven-github-gardener",
  "serde",
  "toml",
+]
+
+[[package]]
+name = "coven-github-gardener"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -392,6 +400,7 @@ dependencies = [
  "anyhow",
  "coven-github-api",
  "coven-github-config",
+ "coven-github-gardener",
  "coven-github-store",
  "serde",
  "serde_json",

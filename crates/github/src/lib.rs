@@ -27,6 +27,18 @@ fn api_url(base_url: &str, path: &str) -> String {
     format!("{}{}", base_url.trim_end_matches('/'), path)
 }
 
+fn encode_ref_component(value: &str) -> String {
+    value
+        .bytes()
+        .flat_map(|byte| match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
+                vec![byte as char]
+            }
+            _ => format!("%{byte:02X}").chars().collect(),
+        })
+        .collect()
+}
+
 fn client() -> anyhow::Result<reqwest::Client> {
     reqwest::Client::builder()
         .user_agent("coven-github/0.1")
@@ -230,6 +242,12 @@ pub enum TaskKind {
         /// What triggered the review: a webhook action (opened, synchronize, …)
         /// or a maintainer command (`command:review`, `command:deepen`, …).
         reason: String,
+    },
+    /// Branch Gardener run over this repository. Command-triggered runs report
+    /// status back to the invoking issue/PR number; scheduled runs have no
+    /// single GitHub conversation surface.
+    GardenRun {
+        report_issue: Option<u64>,
     },
     /// Adapter-only reply on an issue/PR conversation (issue #13): command
     /// acknowledgements, clarifications, status answers, permission declines.
