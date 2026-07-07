@@ -147,6 +147,10 @@ pub struct IssueCommentEvent {
     pub repo_owner: String,
     pub repo_name: String,
     pub issue_number: u64,
+    /// Issue (or PR) title — needed when a `fix` command turns the comment
+    /// into a FixIssue task (issue #13).
+    pub issue_title: String,
+    pub issue_body: String,
     pub comment_body: String,
     pub commenter_login: String,
     /// `issue_comment` fires for pull-request conversation comments as well as
@@ -166,6 +170,7 @@ pub struct PrReviewEvent {
     pub repo_owner: String,
     pub repo_name: String,
     pub pr_number: u64,
+    pub pr_title: String,
     pub review_body: String,
     /// Review verdict: `approved`, `changes_requested`, or `commented`.
     pub review_state: String,
@@ -178,6 +183,7 @@ pub struct PrReviewCommentEvent {
     pub repo_owner: String,
     pub repo_name: String,
     pub pr_number: u64,
+    pub pr_title: String,
     pub comment_body: String,
     pub commenter_login: String,
 }
@@ -191,6 +197,11 @@ pub struct Task {
     pub repo_name: String,
     pub kind: TaskKind,
     pub familiar_id: String,
+    /// Login of the maintainer whose command initiated this task (issue #13).
+    /// The worker checks their repo permission pre-flight and declines below
+    /// `write`. `None` for tasks from non-command triggers.
+    #[serde(default)]
+    pub commander: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -210,17 +221,22 @@ pub enum TaskKind {
         issue_number: u64,
         comment_body: String,
     },
-    /// Adapter-initiated hosted review of a pull request (issue #10). Carries
-    /// the refs captured at event time; supersession — not ref pinning — keeps
-    /// reviews current when the head moves.
+    /// Adapter-initiated hosted review of a pull request (issue #10). Target
+    /// refs are resolved live at execution; supersession — not ref pinning —
+    /// keeps reviews current when the head moves.
     ReviewPullRequest {
         pr_number: u64,
         pr_title: String,
-        head_ref: String,
-        head_sha: String,
-        base_ref: String,
-        /// The webhook action that triggered the review (opened, synchronize, …).
+        /// What triggered the review: a webhook action (opened, synchronize, …)
+        /// or a maintainer command (`command:review`, `command:deepen`, …).
         reason: String,
+    },
+    /// Adapter-only reply on an issue/PR conversation (issue #13): command
+    /// acknowledgements, clarifications, status answers, permission declines.
+    /// Executed without spawning coven-code.
+    CommandReply {
+        issue_number: u64,
+        body: String,
     },
 }
 
